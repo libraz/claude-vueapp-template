@@ -34,7 +34,6 @@ tests/
     │   ├── components/
     │   └── stores/
     └── backend/                    # Backend unit tests (only for complex logic)
-        ├── services/               # Complex business logic
         └── lib/                    # Utility classes with complex behavior
 ```
 
@@ -121,24 +120,23 @@ describe('GET /api/v1/users/:id', () => {
 ### Backend Unit Test Guidelines
 
 **When to create backend unit tests:**
-- Complex business logic classes/services
+- Complex business logic classes
 - Utility functions with multiple edge cases
 - Custom validators or parsers
 - Complex data transformations
 - Classes with state management
 
 **When NOT to create backend unit tests:**
-- Simple CRUD services (covered by E2E tests)
-- Thin controllers (covered by E2E tests)
+- Simple CRUD route handlers (covered by E2E tests)
 - Simple data mappers
 - Configuration files
 - Database models
 
 ### Backend Unit Test Pattern (Vitest)
 ```javascript
-// tests/unit/backend/services/price-calculator.test.js
+// tests/unit/backend/lib/price-calculator.test.js
 import { describe, it, expect } from 'vitest';
-import { PriceCalculator } from '../../../../srv/services/price-calculator.js';
+import { PriceCalculator } from '../../../../srv/lib/price-calculator.js';
 
 describe('PriceCalculator', () => {
   let calculator;
@@ -381,7 +379,7 @@ npx vitest tests/unit/frontend/stores/user.test.js --run
 npx vitest tests/unit/frontend --run
 
 # Backend unit tests (only complex logic)
-npx vitest tests/unit/backend/services/price-calculator.test.js
+npx vitest tests/unit/backend/lib/price-calculator.test.js
 npx vitest tests/unit/backend --run
 
 # API tests - Quick execution by endpoint

@@ -21,8 +21,6 @@ Creates initial directory structure, places configuration files, and generates b
 ├── .claude/agents/       # Agent definitions
 ├── config/              # Configuration files (default.json, etc.)
 ├── docs/                # Documentation
-├── openapi/             # OpenAPI specifications
-│   └── components/      # Shared schemas
 ├── sql/                 # Database definitions
 ├── src/                 # Frontend
 │   ├── assets/
@@ -33,12 +31,11 @@ Creates initial directory structure, places configuration files, and generates b
 │   ├── router/
 │   └── stores/
 ├── srv/                 # Backend
-│   ├── config/
-│   ├── controllers/
-│   ├── lib/
-│   ├── middleware/
-│   ├── routes/
-│   └── services/
+│   ├── lib/             # Shared utilities (prisma, redis, transformer, errors)
+│   ├── middleware/      # Express middleware (auth, validation)
+│   ├── openapi/         # OpenAPI specifications
+│   │   └── components/  # Shared schemas
+│   └── routes/          # API routes with handlers
 ├── support/             # Helper scripts
 └── tests/               # Tests
     ├── api/             # API E2E tests (supertest)
@@ -153,7 +150,7 @@ temp/
 *.temp
 
 # OpenAPI build
-openapi/dist/
+srv/openapi/dist/
 
 # Database
 *.sqlite
@@ -237,10 +234,15 @@ dump.rdb
     "test:unit:ui": "vitest --ui",
     "build:openapi": "node support/openapi-builder.js",
     "validate:openapi": "node support/openapi-validator.js",
-    "update:check": "ncu",
-    "update:minor": "ncu -u --target minor",
-    "update:patch": "ncu -u --target patch",
-    "update:all": "ncu -u"
+    "prisma:pull": "prisma db pull --force",
+    "prisma:format": "prisma-case-format --file prisma/schema.prisma --table-case pascal --field-case camel --map-table-case snake,plural --map-field-case snake",
+    "prisma:format:dry": "prisma-case-format --file prisma/schema.prisma --dry-run --table-case pascal --field-case camel --map-table-case snake,plural --map-field-case snake",
+    "prisma:generate": "prisma generate",
+    "prisma:sync": "yarn prisma:pull && yarn prisma:format && yarn prisma:generate",
+    "ncu": "ncu",
+    "ncu:minor": "ncu -u --target minor",
+    "ncu:patch": "ncu -u --target patch",
+    "ncu:all": "ncu -u"
   },
   "dependencies": {
     "express": "^4.0.0",
@@ -261,6 +263,7 @@ dump.rdb
   },
   "devDependencies": {
     "prisma": "^5.0.0",
+    "prisma-case-format": "^2.0.0",
     "@vitejs/plugin-vue": "^5.0.0",
     "vite": "^5.0.0",
     "nodemon": "^3.0.0",
@@ -303,7 +306,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // OpenAPI validation (skip on error)
 try {
-  const apiSpec = load(readFileSync('./openapi/dist/openapi.yaml', 'utf8'));
+  const apiSpec = load(readFileSync('./srv/openapi/dist/openapi.yaml', 'utf8'));
   app.use(OpenApiValidator.middleware({
     apiSpec,
     validateRequests: true,
@@ -329,10 +332,18 @@ try {
   console.warn('OpenAPI spec not found. Validation disabled.');
 }
 
+// Routes
+import usersRouter from './routes/users.js';
+import authRouter from './routes/auth.js';
+
 // Health check endpoint
 app.get('/api/v1/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// API routes
+app.use('/api/v1/users', usersRouter);
+app.use('/api/v1/auth', authRouter);
 
 // Error handler
 app.use(errorHandler);
@@ -591,7 +602,7 @@ export default {
 </html>
 ```
 
-**openapi/index.yaml**
+**srv/openapi/index.yaml**
 
 ```yaml
 openapi: 3.0.0
@@ -679,21 +690,21 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Create dist directory if not exists
-const distPath = './openapi/dist';
+const distPath = './srv/openapi/dist';
 if (!existsSync(distPath)) {
   mkdirSync(distPath, { recursive: true });
 }
 
-// Check if openapi/index.yaml exists
-if (!existsSync('./openapi/index.yaml')) {
-  console.error('Error: openapi/index.yaml not found');
-  console.log('Please create openapi/index.yaml first');
+// Check if srv/openapi/index.yaml exists
+if (!existsSync('./srv/openapi/index.yaml')) {
+  console.error('Error: srv/openapi/index.yaml not found');
+  console.log('Please create srv/openapi/index.yaml first');
   process.exit(1);
 }
 
 try {
   console.log('Building OpenAPI specification...');
-  execSync('npx @redocly/cli bundle openapi/index.yaml -o openapi/dist/openapi.yaml', {
+  execSync('npx @redocly/cli bundle srv/openapi/index.yaml -o srv/openapi/dist/openapi.yaml', {
     stdio: 'inherit'
   });
   console.log('✓ OpenAPI specification built successfully');
@@ -711,7 +722,7 @@ import { execSync } from 'child_process';
 
 try {
   console.log('Validating OpenAPI specification...');
-  execSync('npx @redocly/cli lint openapi/index.yaml', {
+  execSync('npx @redocly/cli lint srv/openapi/index.yaml', {
     stdio: 'inherit'
   });
   console.log('✓ OpenAPI specification is valid');
@@ -866,6 +877,72 @@ volumes:
   redis_data:
 ```
 
+#### Prisma Schema Skeleton
+
+**prisma/schema.prisma**
+
+```prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// Example model (will be replaced by db introspection)
+model User {
+  id        Int      @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  email     String   @unique(map: "uk_users_email") @map("email") @db.VarChar(255)
+  password  String   @map("password") @db.Char(60)
+  name      String   @map("name") @db.VarChar(255)
+  enabled   Boolean  @default(true) @map("enabled")
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  @@map("users")
+  @@index([enabled], map: "idx_users_enabled")
+}
+```
+
+**prisma/seed.js**
+
+```javascript
+import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcrypt';
+
+const prisma = new PrismaClient();
+
+async function main() {
+  // Clear existing data
+  await prisma.user.deleteMany();
+
+  // Create admin user
+  const hashedPassword = await bcrypt.hash('admin123456', 10);
+  
+  await prisma.user.create({
+    data: {
+      email: 'admin@example.com',
+      password: hashedPassword,
+      name: 'Administrator',
+      enabled: true
+    }
+  });
+
+  console.log('Seed data created successfully');
+}
+
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
+```
+
 **.dockerignore**
 
 ```text
@@ -884,20 +961,25 @@ coverage
 
 ## Initial Setup Procedure
 
-1. Create directory structure (mkdir -p)
+1. Create directory structure (mkdir -p) - Note: Uses simplified 2-layer backend architecture
 2. Place configuration files (.prettierrc, .eslintrc.js, .editorconfig, etc.)
-3. Generate package.json
+3. Generate package.json (including prisma-case-format in devDependencies)
 4. Create boilerplate files (including docker-compose.yml)
-5. Create initial OpenAPI specification (openapi/index.yaml)
-6. Set permissions for support scripts (chmod +x support/*.js)
-7. Configure Git hooks (simple-git-hooks)
-8. Run yarn install
-9. Run yarn build:openapi (build OpenAPI specification)
-10. Initial operation check (run manually in separate terminals):
+5. Create initial Prisma schema (prisma/schema.prisma)
+6. Create initial Prisma seed file (prisma/seed.js)
+7. Create initial OpenAPI specification (srv/openapi/index.yaml)
+8. Set permissions for support scripts (chmod +x support/*.js)
+9. Configure Git hooks (simple-git-hooks)
+10. Run yarn install
+11. Run yarn build:openapi (build OpenAPI specification)
+12. **Prisma Setup** (when database is ready):
+    - `yarn prisma:sync` - Pull schema, format to camelCase, generate client
+    - Or manually: `yarn prisma:pull && yarn prisma:format && yarn prisma:generate`
+13. Initial operation check (run manually in separate terminals):
     - `yarn express` - Start backend (localhost:3000/api/v1/health)
     - `yarn serve` - Start frontend (localhost:5173)
     - **Note**: Do not run within Claude Code
-11. Database environment (if needed):
+14. Database environment (if needed):
     - `docker-compose up -d` - Start MySQL/Redis
 
 ## Minimum Startup Requirements
@@ -912,6 +994,14 @@ coverage
 - Implementation details are delegated to each agent
 - Boilerplate contains only minimal working code
 - Refer to each agent's documentation for detailed configuration file explanations
+
+### Prisma-Specific Notes
+
+- **prisma-case-format**: Automatically handles snake_case ↔ camelCase conversion
+- **Database First**: Project uses database introspection, not code-first migrations
+- **Naming Convention**: Database uses snake_case, code uses camelCase with @map directives
+- **Script Shortcuts**: Use `yarn prisma:sync` for full schema refresh workflow
+- **Manual Process**: Always run `yarn prisma:format:dry` first to preview changes
 
 ## Coordination
 

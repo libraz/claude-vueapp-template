@@ -54,6 +54,7 @@ See individual agent files in `.claude/agents/` for details.
 - Source code: JSDoc format comments
 - File names: kebab-case (auto-validated by Git hooks)
 - ESLint/Prettier: auto-validated by Git hooks
+- Commit messages: English only (include markdown-formatted details)
 
 ### API
 
@@ -70,7 +71,7 @@ See individual agent files in `.claude/agents/` for details.
 - Naming: Rails convention (plural tables, singular columns)
 - Use @map in Prisma (snake_case→camelCase)
 - Complex joins defined as views (`v_` prefix)
-- Cumulative management in schema.sql (Prisma migrations prohibited)
+- Cumulative management via build-schema.sh (Prisma migrations prohibited)
 
 ## Directory Structure
 
@@ -80,7 +81,7 @@ See individual agent files in `.claude/agents/` for details.
 ├── src/             # Frontend
 ├── srv/             # Backend
 ├── tests/           # E2E tests
-├── sql/             # Schema (schema.sql)
+├── sql/             # Schema (build-schema.sh generates full schema)
 ├── openapi/         # API specifications (split management)
 ├── support/         # Helper scripts
 └── docker-compose.yml
@@ -94,15 +95,17 @@ yarn express        # Start backend
 yarn serve          # Start frontend
 
 # Can run within Claude Code
-yarn build          # Build
-yarn build:openapi  # Bundle OpenAPI
-yarn test           # Run tests
+yarn build               # Build
+yarn build:openapi      # Bundle OpenAPI (production: no examples/descriptions)
+yarn build:openapi:full # Bundle OpenAPI (development: with examples/descriptions)
+yarn test                # Run tests
+yarn docs:serve         # Serve OpenAPI documentation (ReDoc on port 8080)
 ```
 
 ## Development Flow
 
 1. Start MySQL/Redis with Docker Compose
-2. Create DB schema (schema.sql)
+2. Create DB schema (run sql/build-schema.sh)
 3. Create OpenAPI specification
 4. Implement REST API
 5. **Comprehensive E2E test verification (mandatory)**

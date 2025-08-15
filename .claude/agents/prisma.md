@@ -147,10 +147,90 @@ main()
 ### Schema Sync Process
 
 1. sql-agent creates/modifies schema.sql
-2. Update Prisma schema to match
-3. Run `prisma db pull` to verify
+2. Run `prisma db pull --force` to introspect database
+3. **Apply prisma-case-format transformation** (see below)
 4. NO `prisma migrate` commands
 5. Use `prisma generate` for client
+
+### Automated Case Convention Management
+
+**IMPORTANT**: Use `prisma-case-format` package for automatic snake_case to camelCase conversion.
+
+#### Installation & Usage
+
+```bash
+# Install the package
+yarn add prisma-case-format -D
+
+# Apply transformation after db pull
+npx prisma-case-format \
+  --file prisma/schema.prisma \
+  --table-case pascal \
+  --field-case camel \
+  --map-table-case snake,plural \
+  --map-field-case snake
+
+# Dry run to preview changes
+npx prisma-case-format \
+  --file prisma/schema.prisma \
+  --dry-run \
+  --table-case pascal \
+  --field-case camel \
+  --map-table-case snake,plural \
+  --map-field-case snake
+```
+
+#### Complete Workflow
+
+```bash
+# 1. Pull database schema
+npx prisma db pull --force
+
+# 2. Transform naming conventions
+npx prisma-case-format \
+  --file prisma/schema.prisma \
+  --table-case pascal \
+  --field-case camel \
+  --map-table-case snake,plural \
+  --map-field-case snake
+
+# 3. Generate Prisma Client
+npx prisma generate
+```
+
+#### Results
+
+**Before (snake_case database)**:
+```prisma
+model attendance_requests {
+  user_id           Int
+  employment_type_id Int
+  created_at        DateTime
+  @@map("attendance_requests")
+}
+```
+
+**After (camelCase code with proper mapping)**:
+```prisma
+model AttendanceRequests {
+  userId           Int      @map("user_id")
+  employmentTypeId Int      @map("employment_type_id") 
+  createdAt        DateTime @map("created_at")
+  @@map("attendance_requests")
+}
+```
+
+**Code Usage**:
+```javascript
+// Now you can use natural camelCase in code
+const request = await prisma.attendanceRequests.create({
+  data: {
+    userId: 1,
+    employmentTypeId: 2,
+    // Maps to user_id, employment_type_id in database
+  }
+});
+```
 
 ### Common Patterns
 
@@ -169,15 +249,40 @@ metadata Json? @db.Json
 ## Commands
 
 ```bash
-# Pull DB schema (verify only)
-yarn prisma db pull
+# Pull DB schema and apply case transformations
+npx prisma db pull --force
+npx prisma-case-format --file prisma/schema.prisma --table-case pascal --field-case camel --map-table-case snake,plural --map-field-case snake
 
 # Generate Prisma Client
-yarn prisma generate
+npx prisma generate
 
 # Run seed
 yarn prisma db seed
+
+# Validation and formatting
+npx prisma validate
+npx prisma format
+
+# Preview transformation (dry run)
+npx prisma-case-format --file prisma/schema.prisma --dry-run --table-case pascal --field-case camel --map-table-case snake,plural --map-field-case snake
 ```
+
+## Troubleshooting
+
+### Case Transform Issues
+- **Problem**: Schema not transforming to camelCase
+- **Solution**: Ensure `prisma-case-format` is installed (`yarn add prisma-case-format -D`)
+- **Check**: Run with `--dry-run` flag to preview changes
+
+### Database Connection
+- **Problem**: `prisma db pull` fails
+- **Solution**: Verify `DATABASE_URL` in `.env` file
+- **Check**: Ensure database server is running
+
+### Client Generation
+- **Problem**: Generated types don't match expectations
+- **Solution**: Run `npx prisma generate` after schema changes
+- **Check**: Clear `node_modules/@prisma/client` if needed
 
 ## References
 

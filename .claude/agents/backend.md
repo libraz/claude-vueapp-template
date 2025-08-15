@@ -19,53 +19,119 @@ tools: Read, Write, Edit, MultiEdit, Glob, Grep, Bash, mcp__ide__getDiagnostics,
 
 ```
 srv/
-├── routes/         # API routes
-├── controllers/    # Request handlers
-├── services/       # Business logic
-├── lib/           # Shared utilities
-├── middleware/     # Express middleware
-└── config/        # Configuration
+├── routes/         # API routes with request handlers
+├── lib/           # Shared utilities (prisma, redis, transformer, errors)
+└── middleware/     # Express middleware (auth, validation)
+
+# Project root (shared)
+config/             # Configuration files (default.json, test.json)
 ```
 
-### Coding Rules
+**Design Philosophy**: Following YAGNI principles, we use the minimal viable architecture. Route handlers directly use Prisma client for simplicity. Controllers and services layers can be added later when business logic becomes complex.
 
-- Comments: English
+### Coding Standards
+
+- All comments and documentation in English
 - Use config module for configuration (no .env files)
+- Direct route handlers for simple CRUD operations
+- Add abstraction layers only when necessary
 
 ### OpenAPI Validation
 
-- express-openapi-validator使用
-- リクエスト/レスポンスの自動検証
-- バリデーションエラーはHttpErrorに変換
-- setup agentのテンプレートを使用
+- Uses express-openapi-validator for automatic validation
+- Request/response validation against OpenAPI specs
+- Validation errors automatically converted to HttpError
+- Templates provided by setup agent
 
-### Prisma Setup
+### Prisma Database Access
 
+#### Schema Naming Conventions
+
+The project uses `prisma-case-format` for automatic snake_case to camelCase conversion:
+
+**Database (snake_case)**:
+```sql
+CREATE TABLE users (
+  id INT PRIMARY KEY,
+  user_name VARCHAR(255),
+  employment_type_id INT,
+  created_at DATETIME,
+  updated_at TIMESTAMP
+);
+```
+
+**Prisma Schema (camelCase with @map)**:
 ```prisma
 model User {
-  id        Int      @id @default(autoincrement())
-  userName  String   @map("user_name")
-  createdAt DateTime @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id               Int      @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  userName         String   @map("user_name") @db.VarChar(255)
+  employmentTypeId Int      @map("employment_type_id") @db.UnsignedInt
+  createdAt        DateTime @map("created_at") @db.DateTime(0)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
   
   @@map("users")
+  @@index([employmentTypeId], map: "idx_users_employment_type")
 }
 ```
 
-- DB: snake_case → Code: camelCase via @map
-- Use views for complex JOINs
+**Code Usage (Natural camelCase)**:
+```javascript
+// Create user
+const user = await prisma.user.create({
+  data: {
+    userName: 'john_doe',
+    employmentTypeId: 1,
+    // No need to specify createdAt (auto-set)
+  }
+});
+
+// Query with camelCase fields
+const users = await prisma.user.findMany({
+  where: {
+    employmentTypeId: 1,
+    userName: { contains: 'john' }
+  },
+  orderBy: { createdAt: 'desc' }
+});
+```
+
+#### Key Benefits
+
+- **Database**: Maintains Rails naming conventions (snake_case)
+- **Code**: Uses JavaScript conventions (camelCase)
+- **Automatic Mapping**: `@map` directives handle conversion
+- **Type Safety**: Full Prisma type support with proper field names
+
+#### Schema Refresh Workflow
+
+When database schema changes:
+```bash
+# Pull latest schema and apply camelCase formatting
+yarn prisma:sync
+
+# Or manually:
+yarn prisma:pull           # Pull from database
+yarn prisma:format         # Convert to camelCase
+yarn prisma:generate       # Generate client
+```
+
+#### Complex Queries & Views
+
+- Use database views for complex JOINs (coordinate with sql agent)
+- Views follow same naming pattern: `v_table_name` → `VTableName`
+- Raw queries when needed: `prisma.$queryRaw`
 
 ### Error Handling
 
 ```javascript
-// Usage in controllers
+// Usage in route handlers
 import { HttpError } from '../lib/http-error.js';
 throw new HttpError(404, 'User not found.', 'USER_NOT_FOUND');
 ```
 
-- HttpErrorクラス使用（setup agentのテンプレート参照）
-- エラーレスポンスはOpenAPI仕様に準拠
-- グローバルエラーハンドラー設定済み
+- Use HttpError class (see setup agent templates)
+- Error responses comply with OpenAPI specifications
+- Global error handler configured
 
 ### Response Transformer
 
@@ -132,43 +198,240 @@ export const authenticateToken = async (req, res, next) => {
 };
 ```
 
-### Config Usage
+### Configuration Usage
 
 ```javascript
 import config from 'config';
 const dbConfig = config.get('database');
 ```
 
+**Note**: Configuration files are located in project root `config/` directory, shared between frontend and backend.
+
 ## Example Code
 
-### Controller
+### Route Handlers
 
 ```javascript
-// srv/controllers/user-controller.js
-import { userService } from '../services/user-service.js';
+// srv/routes/users.js
+import { Router } from 'express';
+import { prisma } from '../lib/prisma.js';
 import { HttpError } from '../lib/http-error.js';
 import { transformForAPI } from '../lib/response-transformer.js';
+import { authenticateToken } from '../middleware/auth.js';
 
-export const getUser = async (req, res, next) => {
+const router = Router();
+
+// Get user by ID
+router.get('/:id', authenticateToken, async (req, res, next) => {
   try {
-    const user = await userService.findById(req.params.id);
+    const user = await prisma.users.findUnique({
+      where: { id: parseInt(req.params.id, 10) },
+      include: {
+        userContracts: {
+          where: { enabled: true },
+          include: { employmentTypes: true }
+        }
+      }
+    });
     if (!user) throw new HttpError(404, 'User not found.', 'USER_NOT_FOUND');
     res.json(transformForAPI(user));
   } catch (error) {
     next(error);
   }
+});
+
+// Create new user
+router.post('/', authenticateToken, async (req, res, next) => {
+  try {
+    const { email, password, name, displayName } = req.body;
+    const user = await prisma.users.create({
+      data: {
+        email,
+        password,
+        name,
+        displayName,
+        enabled: true
+      }
+    });
+    res.status(201).json(transformForAPI(user));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get users with filtering
+router.get('/', authenticateToken, async (req, res, next) => {
+  try {
+    const { limit = 50, offset = 0, search, enabled = true } = req.query;
+    
+    const where = {
+      enabled: enabled === 'true',
+      ...(search && {
+        OR: [
+          { name: { contains: search } },
+          { email: { contains: search } },
+          { displayName: { contains: search } }
+        ]
+      })
+    };
+
+    const users = await prisma.users.findMany({
+      where,
+      include: {
+        userContracts: {
+          where: { enabled: true },
+          include: { employmentTypes: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: parseInt(limit, 10),
+      skip: parseInt(offset, 10)
+    });
+
+    res.json(transformForAPI(users));
+  } catch (error) {
+    next(error);
+  }
+});
+
+export default router;
+```
+
+### Attendance Routes Example
+
+```javascript
+// srv/routes/attendances.js
+import { Router } from 'express';
+import { prisma } from '../lib/prisma.js';
+import { HttpError } from '../lib/http-error.js';
+import { transformForAPI } from '../lib/response-transformer.js';
+import { authenticateToken } from '../middleware/auth.js';
+
+const router = Router();
+
+// Get attendances with filtering
+router.get('/', authenticateToken, async (req, res, next) => {
+  try {
+    const { userId, workOn, limit = 50, offset = 0 } = req.query;
+    
+    const where = {
+      ...(userId && { userContracts: { userId: parseInt(userId, 10) } }),
+      ...(workOn && { workOn: new Date(workOn) })
+    };
+
+    const attendances = await prisma.attendances.findMany({
+      where,
+      include: {
+        userContracts: {
+          include: {
+            users: { select: { name: true, email: true } },
+            employmentTypes: true
+          }
+        },
+        attendanceWorkItems: {
+          include: { workItems: true }
+        }
+      },
+      orderBy: { workOn: 'desc' },
+      take: parseInt(limit, 10),
+      skip: parseInt(offset, 10)
+    });
+
+    res.json(transformForAPI(attendances));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Create new attendance record
+router.post('/', authenticateToken, async (req, res, next) => {
+  try {
+    const { userContractId, workOn, checkinAt, transportationNote } = req.body;
+    
+    const attendance = await prisma.attendances.create({
+      data: {
+        userContractId: parseInt(userContractId, 10),
+        workOn: new Date(workOn),
+        checkinAt: checkinAt ? new Date(checkinAt) : null,
+        transportationNote,
+        breakMinutes: 0,
+        transportationFee: 0
+      },
+      include: {
+        userContracts: {
+          include: { users: true, employmentTypes: true }
+        }
+      }
+    });
+
+    res.status(201).json(transformForAPI(attendance));
+  } catch (error) {
+    next(error);
+  }
+});
+
+export default router;
+```
+
+## Architecture Guidelines
+
+### When to Add Abstraction Layers
+
+The current design intentionally omits controllers and services layers. Consider adding them when:
+
+- **Complex Business Logic**: Multiple table operations or transactions required
+- **Data Transformation**: Heavy processing of Prisma query results
+- **External API Integration**: Business logic involving third-party systems
+- **Route Handler Bloat**: Single endpoint exceeding 100 lines
+
+### Services Layer Implementation Example
+
+When needed, implement services like this:
+
+```javascript
+// srv/services/attendance-service.js
+import { prisma } from '../lib/prisma.js';
+
+export const attendanceService = {
+  async createDailyAttendance(userContractId, workOn, workItems) {
+    return await prisma.$transaction(async (tx) => {
+      const attendance = await tx.attendances.create({
+        data: { userContractId, workOn, breakMinutes: 0 }
+      });
+      
+      if (workItems?.length) {
+        await tx.attendanceWorkItems.createMany({
+          data: workItems.map(item => ({
+            attendanceId: attendance.id,
+            workItemId: item.workItemId,
+            minutes: item.minutes
+          }))
+        });
+      }
+      
+      return attendance;
+    });
+  }
 };
 ```
 
-### Service
+### Controllers Layer Implementation Example
 
 ```javascript
-// srv/services/user-service.js
-import { prisma } from '../lib/prisma.js';
+// srv/controllers/attendance-controller.js
+import { attendanceService } from '../services/attendance-service.js';
+import { transformForAPI } from '../lib/response-transformer.js';
 
-export const userService = {
-  findById: (id) => prisma.user.findUnique({ where: { id: parseInt(id, 10) } }),
-  findByEmail: (email) => prisma.user.findUnique({ where: { email } }),
+export const createAttendance = async (req, res, next) => {
+  try {
+    const { userContractId, workOn, workItems } = req.body;
+    const attendance = await attendanceService.createDailyAttendance(
+      userContractId, workOn, workItems
+    );
+    res.status(201).json(transformForAPI(attendance));
+  } catch (error) {
+    next(error);
+  }
 };
 ```
 
@@ -179,6 +442,24 @@ export const userService = {
 - Response validation ensures API compliance
 - Use exact schema definitions from openapi agent
 - **Never run `yarn express` in Claude Code** - Start manually in separate terminal
+- Configuration files are shared from project root `config/` directory
+
+### Prisma-Specific Notes
+
+- **Field Names**: Always use camelCase in code (e.g., `email`, `displayName`, `userContractId`)
+- **Database Sync**: Run `yarn prisma:sync` after database schema changes
+- **Type Safety**: Leverage Prisma's type generation for field names
+- **Relations**: Include related data using camelCase relation names
+- **Performance**: Use `select` and `include` appropriately to optimize queries
+- **Raw Queries**: Use `prisma.$queryRaw` for complex queries not expressible via Prisma API
+
+### Development Workflow
+
+1. Define API endpoints in OpenAPI specification (openapi agent)
+2. Create route handlers with direct Prisma queries
+3. Add authentication/authorization middleware as needed
+4. Test with comprehensive E2E tests (test agent)
+5. Refactor to controllers/services only when complexity demands it
 
 ## References
 
