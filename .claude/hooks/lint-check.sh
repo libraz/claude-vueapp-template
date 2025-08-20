@@ -20,15 +20,26 @@ if [[ ! "$EXT" =~ ^(js|vue|md)$ ]]; then
 fi
 
 # Run ESLint if available
-if command -v eslint &> /dev/null && [ -f ".eslintrc.js" -o -f ".eslintrc.json" ]; then
-  echo "Running ESLint on $FILE_PATH..."
-  eslint "$FILE_PATH" --fix
+if command -v eslint &> /dev/null && [ -f ".eslintrc.js" -o -f ".eslintrc.json" -o -f ".eslintrc.cjs" ]; then
+  # First, try to auto-fix any fixable issues
+  echo "Running ESLint --fix on $FILE_PATH..."
+  eslint --fix "$FILE_PATH" 2>/dev/null || true
+  
+  # Then run validation
+  echo "Validating ESLint on $FILE_PATH..."
+  if ! eslint "$FILE_PATH"; then
+    echo "ERROR: ESLint errors found that cannot be auto-fixed. Please fix them before saving."
+    exit 1
+  fi
 fi
 
 # Run Prettier if available
 if command -v prettier &> /dev/null && [ -f ".prettierrc" -o -f ".prettierrc.json" ]; then
   echo "Running Prettier on $FILE_PATH..."
-  prettier --write "$FILE_PATH"
+  if ! prettier --check "$FILE_PATH"; then
+    echo "ERROR: Prettier formatting issues found. Please fix them before saving."
+    exit 1
+  fi
 fi
 
 # Check for Vue Options API usage

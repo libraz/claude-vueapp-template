@@ -10,8 +10,8 @@ tools: Read, Write, Edit, MultiEdit, Glob, Grep, Bash
 
 - ACL JSON column definition in database
 - Zod schema definitions for ACL structure
-- ACL class implementation
-- Express middleware for permission checking
+- ACL class implementation in `srv/lib/`
+- Express middleware for permission checking in `srv/middleware/`
 - Session integration with Redis
 
 ## Standards
@@ -161,8 +161,10 @@ export const authMiddleware = async (req, res, next) => {
 
 ### Permission Middleware
 
+**Location**: All ACL middleware must be placed in `srv/middleware/` directory following backend agent conventions.
+
 ```javascript
-// srv/middleware/permissions.js
+// srv/middleware/acl.js
 export const hasScope = (scope) => {
   return (req, res, next) => {
     if (!req.acl) {
@@ -202,7 +204,7 @@ export const hasScope = (scope) => {
 // srv/routes/users.js
 import { Router } from 'express';
 import { authMiddleware } from '../middleware/auth.js';
-import { hasScope } from '../middleware/permissions.js';
+import { hasScope } from '../middleware/acl.js';
 
 const router = Router();
 

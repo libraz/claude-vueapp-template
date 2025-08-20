@@ -1,150 +1,192 @@
 # Project Configuration
 
-## Sub-agent Configuration
+## Sub-agents
+**IMPORTANT**: Use appropriate agent for each task (see `.claude/agents/`)
+- **openapi**: API specs | **sql**: DB schema | **backend**: Express/Prisma
+- **frontend**: Vue3/Vuetify | **test**: E2E | **prisma**: @map config
+- **devops**: Docker/CI | **docs**: README | **acl**: permissions | **setup**: env config
 
-Development is divided among the following sub-agents:
+## Stack
+- **Core**: Node.js 22/Yarn 4/ESM/JS only (TS for devDeps)
+- **Frontend**: Vue3+Vuetify3 SPA (JP i18n) port:5173
+- **Backend**: Express REST API port:3000
+- **DB**: MySQL 8.4, Redis (DB0:sessions, DB1:cache)
+- **Libs**: config, luxon, nanoid(32), axios, js-cookie, bcrypt
 
-- **setup**: Environment setup, configuration file management
-- **openapi**: OpenAPI specification creation and management
-- **sql**: Database schema and view management
-- **backend**: Server-side development (Express, Prisma)
-- **frontend**: Frontend development (Vue3, Vuetify)
-- **test**: E2E test creation
-- **prisma**: Prisma schema management, @map configuration
-- **devops**: Docker, GitHub Actions, deployment
-- **docs**: Documentation management (README, docs/)
-- **acl**: Access control list, permission management, middleware
+## Conventions
+- **Comments/tests**: Japanese | **Files**: kebab-case | **Commits**: English
+- **ESLint Airbnb**: 
+  - No await in loops → use Promise.all() or for...of
+  - Prefer destructuring, const over let, semicolons required
+  - Single quotes (except to avoid escaping)
+  - Remove: unused vars, console.log, trailing spaces, var
+  - Object shorthand: `{ method() {} }` not `{ method: function() {} }`
+- **Avoid regex**: Prioritize readability
 
-See individual agent files in `.claude/agents/` for details.
+## API & DB
+- **API**: `/api/v1/`, snake_case paths, camelCase data, UNIX timestamps (seconds), limit/offset
+- **Auth**: Bearer token only (frontend: js-cookie)
+- **Validation**: express-openapi-validator only (no manual validation)
+- **DB**: Rails naming (plural tables, singular columns)
+- **Prisma**: @map for snake_case→camelCase conversion
+- **Views**: Complex joins as `v_` prefix views
+- **Schema**: build-schema.sh (NO Prisma migrations)
 
-## Project Overview
-
-- Node.js 22.x monorepo web application
-- Frontend: Vue3 + Vuetify3 SPA (with Japanese localization)
-- Backend: Express REST API
-
-## Technology Stack
-
-### Base Environment
-
-- Node.js 22.x (managed by Volta)
-- Yarn 4.x (fixed to `node-modules` in `.yarnrc.yml`)
-- ESM (type: module)
-- JavaScript (no TypeScript, auto-validated by Git hooks)
-
-### Main Libraries
-
-- **Configuration**: config (.env file usage auto-validated by Git hooks)
-- **Date/Time**: luxon
-- **ID Generation**: nanoid
-- **HTTP Client**: axios
-- **Cookies**: js-cookie
-
-### Data Stores
-
-- MySQL 8.4.x
-- Redis (DB0: sessions, DB1: cache)
-- Docker Compose
-
-## Common Conventions
-
-### Coding
-
-- Comments/test names: Japanese
-- Source code: JSDoc format comments
-- File names: kebab-case (auto-validated by Git hooks)
-- ESLint/Prettier: auto-validated by Git hooks
-
-### API
-
-- Base path: `/api/v1/`
-- Paths: snake_case
-- Data: camelCase
-- Errors: English
-- Dates: UNIX timestamp (seconds)
-- Pagination: `limit`/`offset`
-- Authentication: Bearer token only (frontend manages with js-cookie)
-
-### Database
-
-- Naming: Rails convention (plural tables, singular columns)
-- Use @map in Prisma (snake_case→camelCase)
-- Complex joins defined as views (`v_` prefix)
-- Cumulative management in schema.sql (Prisma migrations prohibited)
-
-## Directory Structure
-
-```text
-/
-├── .claude/agents/   # Sub-agent definitions
-├── src/             # Frontend
-├── srv/             # Backend
-├── tests/           # E2E tests
-├── sql/             # Schema (schema.sql)
-├── openapi/         # API specifications (split management)
-├── support/         # Helper scripts
-└── docker-compose.yml
+## Structure
+```
+src/          # Frontend (Vue3/Vuetify3)
+srv/          # Backend (Express/Prisma)
+  routes/     # API routes (direct Prisma - YAGNI)
+  lib/        # Shared utils (errors, acl, transformer)
+  middleware/ # Auth, validation, permissions
+tests/        # E2E tests (Node test runner + Supertest)
+sql/          # Schema (build-schema.sh generates full)
+openapi/      # API specs (split management)
 ```
 
-## Development Commands
+## Commands
+**Manual terminals**: 
+- `yarn express` (backend:3000)
+- `yarn serve` (frontend:5173)
 
-```bash
-# Run manually in separate terminals (not within Claude Code)
-yarn express        # Start backend
-yarn serve          # Start frontend
+**Claude Code OK**:
+- `yarn build:openapi` - Bundle OpenAPI (REQUIRED before API testing)
+- `yarn build:openapi:full` - With examples/descriptions (dev)
+- `NODE_ENV=test yarn test:api` - Run E2E tests (auto DB config)
+- `yarn prisma:seed` - Seed DB (see seed file for default password)
+- `yarn prisma:sync` - Sync Prisma schema
+- `ALLOW_DB_CLEAR=true yarn prisma:seed` - Reset and seed
 
-# Can run within Claude Code
-yarn build          # Build
-yarn build:openapi  # Bundle OpenAPI
-yarn test           # Run tests
-```
+**Production**: `NODE_ENV=production node srv/start.js` (serves both on :3000)
 
 ## Development Flow
+1. Docker Compose → MySQL/Redis
+2. `sql/build-schema.sh` → DB schema
+3. OpenAPI spec → `yarn build:openapi`
+4. REST API implementation
+5. **E2E tests (mandatory)**:
+   - Success: CRUD, pagination, filtering, sorting
+   - Errors: 400 (validation), 401 (no auth), 403 (no permission), 404, 409
+   - Auth: roles (admin/user/guest), token expiry, invalid tokens
+   - Boundaries: max/min values, empty strings, null, special chars
+6. Frontend UI
 
-1. Start MySQL/Redis with Docker Compose
-2. Create DB schema (schema.sql)
-3. Create OpenAPI specification
-4. Implement REST API
-5. **Comprehensive E2E test verification (mandatory)**
-6. Create UI
+## Git Hooks (Auto-validation)
+- ESLint/Prettier code quality
+- kebab-case file naming
+- Prohibit: .env files, CommonJS (except TS for devDeps)
+- Warn: Vue Options API usage
 
-### API Implementation Test Requirements
+## Critical Implementation
 
-All API endpoints must have the following E2E tests upon implementation:
+### Middleware Order (srv/app.js) - MUST FOLLOW
+```javascript
+1. express.json()              // Basic middleware
+2. responseTransformer         // BEFORE routes!
+3. /api/v1/health             // BEFORE validator
+4. OpenAPI validator          // BEFORE routes! (validates requests)
+5. /api/v1/* routes           // API routes (after validation)
+6. express.static(dist)       // Production only
+7. spaFallback               // MUST BE LAST
+```
 
-**Important**: Always run tests after creation and confirm they pass
+### Validation Strategy
+- **OpenAPI**: Handles basic request validation (required fields, formats)
+- **validator library**: For complex validations OpenAPI can't handle
+  - Password strength: `validator.isStrongPassword()` 
+  - Custom business rules as needed
+- **IMPORTANT**: OpenAPI validator MUST be before API routes
 
-- **Success Cases**
-  - Success cases for each HTTP method (GET/POST/PUT/DELETE)
-  - Pagination, filtering, sorting
-  - Response format validation
+### Field Naming
+- **DB**: Store password field directly (NOT `passwordHash`)
+- **Prisma**: Use @map for snake_case to camelCase conversion
+- **Response**: Auto-excludes `password` via transformer
+- **Dates**: `*At` → UNIX timestamp, `*On` → YYYY-MM-DD
 
-- **Error Cases**
-  - 400 Bad Request (validation errors)
-  - 401 Unauthorized (no authentication)
-  - 403 Forbidden (insufficient permissions)
-  - 404 Not Found (resource not found)
-  - 409 Conflict (duplicate errors, etc.)
+### Common Issues
+- Port conflict: `lsof -i :3000` → kill process
+- OpenAPI errors: Run `yarn build:openapi` first
+- Docker not running: Check containers
+- Auth: Check seed files for default password
+- Test DB: Auto-configured via `srv/lib/db.js` when NODE_ENV=test
+- Validation: OpenAPI validator must be BEFORE route handlers
 
-- **Authentication/Authorization Tests**
-  - Role-based access (admin/user/guest)
-  - Token expiration
-  - Invalid tokens
+## ACL Implementation (CRITICAL)
 
-- **Boundary Value Tests**
-  - Maximum/minimum values
-  - Empty strings, null values
-  - Special characters
+### ACL Structure
+```javascript
+{
+  administrator: boolean,  // true = all permissions
+  services: {
+    users: { create, read, update, delete, manage },
+    groups: { create, read, update, delete },
+    attendances: { create, read, update, delete, complete },
+    elearnings: { create, read, update, delete, complete },
+    surveys: { create, read, update, delete, respond, analyze },
+    reports: { create, read, update, delete },
+    projects: { create, read, update, delete },
+    tasks: { create, read, update, delete }
+  }
+}
+```
 
----
+### Usage Pattern
+```javascript
+import { ACL } from '../lib/acl.js';
 
-See individual agent files for detailed specifications.
+// Login: normalize permissions
+const acl = new ACL(user.acl);
+const token = await createSession({
+  id: user.id,
+  email: user.email,
+  name: user.name,
+  permissions: acl.data  // Normalized ACL
+});
 
-## Automatic Validation with Git Hooks
+// Middleware: creates req.acl
+export const authenticate = async (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) throw new ApiError(401, ErrorCodes.UNAUTHORIZED);
+  
+  const sessionData = await redisClient.get(`session:${token}`);
+  req.user = JSON.parse(sessionData);
+  req.acl = new ACL(req.user.permissions);
+  next();
+};
 
-The following conventions are automatically validated by Git hooks:
+// Routes: check permissions
+if (!req.acl.can('users', 'manage')) {
+  throw new ApiError(403, ErrorCodes.FORBIDDEN);
+}
+```
 
-- Code quality checks with ESLint/Prettier
-- kebab-case validation for file names
-- Prohibition of .env files, TypeScript, CommonJS
-- Warning for Vue Options API usage
+### Permission Middleware
+- `requirePermission(scope)` - Check specific permission
+- `requireServiceAccess(service)` - Check service access
+- `requireAdmin()` - Admin only
+
+### Admin Configuration
+- Administrator permission: `{ administrator: true }`
+- Admin accounts defined in seed data
+- Default passwords in seed configuration
+
+## Health Check
+- Path: `/api/v1/health` (no OpenAPI validation)
+- Checks: server, database, redis, redisCache
+- Status: 200 (all OK) or 503 (any error)
+- Register BEFORE OpenAPI validator
+
+## Error Handling
+```javascript
+import { ApiError, ErrorCodes } from '../lib/errors.js';
+
+// One-line throws (no req/res needed)
+throw new ApiError(404, ErrorCodes.USER_NOT_FOUND, 'User not found');
+throw new ApiError(401, ErrorCodes.UNAUTHORIZED, 'Invalid token');
+throw new ApiError(403, ErrorCodes.FORBIDDEN, 'Access denied');
+```
+
+## Response Transformer
+- Auto-converts dates: `createdAt` → UNIX, `createdOn` → YYYY-MM-DD
+- Auto-excludes: `password` field
+- Handles nested objects/arrays recursively

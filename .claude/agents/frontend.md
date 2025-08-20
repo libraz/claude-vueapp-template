@@ -28,12 +28,34 @@ src/
 ```
 
 ### Vuetify Configuration
-Vuetify is configured with Japanese locale by default:
+Vuetify is configured with Japanese locale and theme colors:
 ```javascript
-// src/plugins/vuetify.js
+// src/main.js (configured directly)
+import 'vuetify/styles';
+import { createVuetify } from 'vuetify';
+import * as components from 'vuetify/components';
+import * as directives from 'vuetify/directives';
 import { ja } from 'vuetify/locale';
 
-export default createVuetify({
+const vuetify = createVuetify({
+  components,
+  directives,
+  theme: {
+    defaultTheme: 'light',
+    themes: {
+      light: {
+        colors: {
+          primary: '#1976D2',
+          secondary: '#424242',
+          accent: '#82B1FF',
+          error: '#FF5252',
+          info: '#2196F3',
+          success: '#4CAF50',
+          warning: '#FFC107'
+        }
+      }
+    }
+  },
   locale: {
     locale: 'ja',
     messages: { ja }
@@ -44,7 +66,18 @@ export default createVuetify({
 ### Coding Rules
 - Vue3 Composition API only
 - Component names: PascalCase
-- Comments: English
+- Comments: Japanese in code
+- ESLint: Airbnb rules with ESM extensions
+- Import: Always include `.js` extension for local imports
+  ```javascript
+  // Correct
+  import router from './router/index.js';
+  import { useAuthStore } from '../stores/index.js';
+  
+  // Wrong
+  import router from './router';
+  import { useAuthStore } from '../stores';
+  ```
 
 ### Component Design
 ```vue

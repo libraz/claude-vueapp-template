@@ -34,7 +34,6 @@ tests/
     │   ├── components/
     │   └── stores/
     └── backend/                    # Backend unit tests (only for complex logic)
-        ├── services/               # Complex business logic
         └── lib/                    # Utility classes with complex behavior
 ```
 
@@ -46,21 +45,52 @@ tests/
   - `[action].test.js` for specific actions (`/users/search`)
 - **Quick test execution**:
   ```bash
+  # Test all API tests (auto DB config)
+  NODE_ENV=test yarn test:api
+  
   # Test specific endpoint
-  npx vitest tests/api/auth/login.test.js
+  NODE_ENV=test npx vitest run tests/api/auth/login.test.js
   
   # Test all auth endpoints
-  npx vitest tests/api/auth
+  NODE_ENV=test npx vitest run tests/api/auth
   
   # Test all user endpoints
-  npx vitest tests/api/users
+  NODE_ENV=test npx vitest run tests/api/users
   ```
 
 ### Test Framework
 - **API Tests**: Vitest + Supertest
-- **Frontend Tests**: Vitest + Vue Test Utils
+- **Frontend Tests**: Vitest + Vue Test Utils  
 - Comments in English, test names in Japanese
 - **Individual test execution**: Use `npx vitest` directly (not yarn)
+- **TypeScript**: Allowed for dev dependencies (e.g., @vitest/eslint-plugin)
+
+### Test Configuration
+- **Database**: Auto-configured via `srv/lib/db.js` when NODE_ENV=test
+- **No .env needed**: Config values used automatically
+- **Test accounts** (from production seed data):
+  - Admin: `yumiko@harmilia.com` / `Password123!`
+  - User: `ayumi@harmilia.com` / `Password123!`  
+  - Guest: `non@harmilia.com` / `Password123!`
+- **Password pattern**: `^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)` (min 8 chars)
+- **IMPORTANT**: All test passwords must match this pattern (e.g., `Password123!`)
+
+### OpenAPI Validation in Tests
+- **Validation happens automatically**: OpenAPI validator runs before routes
+- **Test validation errors**: Expect detailed error responses
+```javascript
+expect(response.body).toMatchObject({
+  statusCode: 400,
+  errorCode: 'VALIDATION_ERROR',
+  message: 'Validation failed',
+  errors: expect.arrayContaining([
+    expect.objectContaining({
+      field: expect.stringContaining('email'),
+      errorCode: 'INVALID_FORMAT'
+    })
+  ])
+});
+```
 
 ### API E2E Test Pattern (Vitest)
 ```javascript
@@ -121,24 +151,23 @@ describe('GET /api/v1/users/:id', () => {
 ### Backend Unit Test Guidelines
 
 **When to create backend unit tests:**
-- Complex business logic classes/services
+- Complex business logic classes
 - Utility functions with multiple edge cases
 - Custom validators or parsers
 - Complex data transformations
 - Classes with state management
 
 **When NOT to create backend unit tests:**
-- Simple CRUD services (covered by E2E tests)
-- Thin controllers (covered by E2E tests)
+- Simple CRUD route handlers (covered by E2E tests)
 - Simple data mappers
 - Configuration files
 - Database models
 
 ### Backend Unit Test Pattern (Vitest)
 ```javascript
-// tests/unit/backend/services/price-calculator.test.js
+// tests/unit/backend/lib/price-calculator.test.js
 import { describe, it, expect } from 'vitest';
-import { PriceCalculator } from '../../../../srv/services/price-calculator.js';
+import { PriceCalculator } from '../../../../srv/lib/price-calculator.js';
 
 describe('PriceCalculator', () => {
   let calculator;
@@ -222,13 +251,18 @@ import app from '../../../srv/app.js';
 
 // Get bearer token by login API
 export const getTestToken = async (role = 'user') => {
-  const testAccount = config.get(`testAccounts.${role}`);
+  // Maps role to actual email addresses from production seed
+  const accountMap = {
+    admin: 'yumiko@harmilia.com',
+    user: 'ayumi@harmilia.com',
+    guest: 'non@harmilia.com'
+  };
   
   const response = await request(app)
     .post('/api/v1/auth/login')
     .send({
-      email: testAccount.email,
-      password: testAccount.password
+      email: accountMap[role],
+      password: 'Password123!' // Default password from seed
     });
   
   if (response.status !== 200) {
@@ -238,34 +272,26 @@ export const getTestToken = async (role = 'user') => {
   return response.body.token;
 };
 
-// Setup test accounts in database
+// Setup test accounts in database (uses production seed data)
 export const setupTestAccounts = async () => {
-  const testAccounts = config.get('testAccounts');
-  
-  for (const [role, account] of Object.entries(testAccounts)) {
-    const hashedPassword = await bcrypt.hash(account.password, 10);
-    await prisma.user.upsert({
-      where: { email: account.email },
-      update: {},
-      create: {
-        email: account.email,
-        password: hashedPassword,
-        name: account.name,
-        role: account.role
-      }
-    });
-  }
+  // Run the seed script to ensure accounts exist
+  // This uses the production/03-users.json file
+  // Accounts are already created with Password123!
 };
 
 // Create custom test user
 export const createTestUser = async (data = {}) => {
-  const hashedPassword = await bcrypt.hash('password123', 10);
-  return prisma.user.create({
+  const password = data.password || 'TestPass123'; // Valid pattern
+  const hashedPassword = await bcrypt.hash(password, 10);
+  return prisma.users.create({
     data: {
       email: data.email || `test-${nanoid()}@example.com`,
       password: hashedPassword,
       name: data.name || 'Test User',
-      ...data,
+      displayName: data.displayName || data.name || 'Test User',
+      acl: data.acl || {},
+      enabled: data.enabled !== undefined ? data.enabled : true,
+      notes: data.notes || null,
     },
   });
 };
@@ -290,15 +316,20 @@ export const createAuthToken = async (user) => {
 // config/test.json
 {
   "server": {
-    "port": 3001
+    "port": 3000
   },
   "database": {
-    "url": "mysql://root:password@localhost:3306/test_database"
+    "url": "mysql://root:root_password@localhost:3306/harmilia_crosswork"
   },
   "redis": {
     "host": "localhost",
     "port": 6379,
-    "db": 15
+    "db": 0
+  },
+  "redisCache": {
+    "host": "localhost",
+    "port": 6379,
+    "db": 1
   },
   "session": {
     "ttl": 3600
@@ -306,19 +337,19 @@ export const createAuthToken = async (user) => {
   "testAccounts": {
     "admin": {
       "email": "admin@example.com",
-      "password": "admin123456",
+      "password": "AdminPass123",
       "name": "Test Admin",
       "role": "admin"
     },
     "user": {
       "email": "user@example.com",
-      "password": "user123456",
+      "password": "UserPass123",
       "name": "Test User",
       "role": "user"
     },
     "guest": {
       "email": "guest@example.com",
-      "password": "guest123456",
+      "password": "GuestPass123",
       "name": "Test Guest",
       "role": "guest"
     }
@@ -381,7 +412,7 @@ npx vitest tests/unit/frontend/stores/user.test.js --run
 npx vitest tests/unit/frontend --run
 
 # Backend unit tests (only complex logic)
-npx vitest tests/unit/backend/services/price-calculator.test.js
+npx vitest tests/unit/backend/lib/price-calculator.test.js
 npx vitest tests/unit/backend --run
 
 # API tests - Quick execution by endpoint
@@ -489,14 +520,20 @@ describe('API Endpoint: /api/v1/[full-path]', () => {
 
 1. **Ensure servers are running** (manually in separate terminals):
    - `yarn express` - Backend server
-   - `yarn serve` - Frontend dev server
-2. Write test code
-3. **Run test immediately**: `npx vitest [test-file] --run`
-4. Fix any errors or failures
-5. Run again until all tests pass
-6. Run related test suite to ensure no regression
+   - `yarn serve` - Frontend dev server (only for frontend tests)
+2. **Build OpenAPI spec**: `yarn build:openapi` (CRITICAL before API testing)
+3. **Seed database**: `yarn prisma:seed` (uses Password123!)
+4. Write test code
+5. **Run test immediately**: `NODE_ENV=test npx vitest [test-file] --run`
+6. Fix any errors or failures
+7. Run again until all tests pass
+8. Run related test suite to ensure no regression
 
-**Note**: Never run `yarn express` or `yarn serve` within Claude Code. These should be manually started in separate terminal windows.
+**Critical Notes**:
+- Never run `yarn express` or `yarn serve` within Claude Code
+- OpenAPI validator MUST be placed BEFORE route handlers in app.js
+- NO manual validation in routes - OpenAPI handles all validation
+- Test database = production database (harmilia_crosswork)
 
 ## References
 - See CLAUDE.md for project specs

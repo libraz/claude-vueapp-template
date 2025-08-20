@@ -12,22 +12,20 @@
 				"hooks": [
 					{
 						"type": "command",
-						"command": "$CLAUDE_PROJECT_DIR/.claude/hooks/log-command.sh"
+						"command": ".claude/hooks/log-command.sh"
 					}
 				]
-			}
-		],
-		"PostToolUse": [
+			},
 			{
-				"matcher": "Write|Edit|MultiEdit",
+				"matcher": "Write|Edit|MultiEdit|Task",
 				"hooks": [
 					{
 						"type": "command",
-						"command": "$CLAUDE_PROJECT_DIR/.claude/hooks/lint-check.sh"
+						"command": ".claude/hooks/lint-check.sh"
 					},
 					{
 						"type": "command",
-						"command": "$CLAUDE_PROJECT_DIR/.claude/hooks/validate-filename.sh"
+						"command": ".claude/hooks/validate-filename.sh"
 					}
 				]
 			},
@@ -36,10 +34,11 @@
 				"hooks": [
 					{
 						"type": "command",
-						"command": "$CLAUDE_PROJECT_DIR/.claude/hooks/validate-new-file.sh"
+						"command": ".claude/hooks/validate-new-file.sh"
 					}
 				]
 			}
-		]
+		],
+		"PostToolUse": []
 	}
 }

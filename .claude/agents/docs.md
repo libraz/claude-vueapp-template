@@ -218,6 +218,12 @@ docs/
 - Check broken links
 - Maintain consistency
 
+## Development Commands
+
+```bash
+yarn docs:serve     # Serve OpenAPI documentation using ReDoc (port 8080)
+```
+
 ## References
 
 - API documentation is auto-generated from OpenAPI specs
